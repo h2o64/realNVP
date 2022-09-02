@@ -760,64 +760,85 @@ class RealNVP(nn.Module):
         Returns:
             transformed tensor in data space X.
         """
-        x, x_off_1 = self.factor_out(z, self.order_matrix_1)
+
+        x, log_diag_J = z, torch.zeros_like(z)
+        x, x_off_1 = self.factor_out(x, self.order_matrix_1)
+        log_diag_J, log_diag_J_off_1 = self.factor_out(log_diag_J, self.order_matrix_1)
 
         if self.datainfo.name in ['imnet32', 'imnet64', 'celeba']:
             x, x_off_2 = self.factor_out(x, self.order_matrix_2)
+            log_diag_J, log_diag_J_off_2 = self.factor_out(log_diag_J, self.order_matrix_2)
+            x, x_off_2 = self.factor_out(x, self.order_matrix_2)
+            log_diag_J, log_diag_J_off_2 = self.factor_out(log_diag_J, self.order_matrix_2)
             x, x_off_3 = self.factor_out(x, self.order_matrix_3)
+            log_diag_J, log_diag_J_off_3 = self.factor_out(log_diag_J, self.order_matrix_3)
 
             if self.datainfo.name in ['imnet64', 'celeba']:
                 x, x_off_4 = self.factor_out(x, self.order_matrix_4)
+                log_diag_J, log_diag_J_off_4 = self.factor_out(log_diag_J, self.order_matrix_4)
 
                 # SCALE 5: 4 x 4
                 for i in reversed(range(len(self.s5_ckbd))):
-                    x, _ = self.s5_ckbd[i](x, reverse=True)
-                
+                    x, inc = self.s5_ckbd[i](x, reverse=True)
+                    log_diag_J += inc
+
                 x = self.restore(x, x_off_4, self.order_matrix_4)
+                log_diag_J = self.restore(log_diag_J, log_diag_J_off_4, self.order_matrix_4)
 
                 # SCALE 4: 8 x 8
-                x = self.squeeze(x)
+                x, log_diag_J = self.squeeze(x), self.squeeze(log_diag_J)
                 for i in reversed(range(len(self.s4_chan))):
-                    x, _ = self.s4_chan[i](x, reverse=True)
-                x = self.undo_squeeze(x)
+                    x, inc = self.s4_chan[i](x, reverse=True)
+                    log_diag_J += inc
+                x, log_diag_J = self.undo_squeeze(x), self.undo_squeeze(log_diag_J)
 
             for i in reversed(range(len(self.s4_ckbd))):
-                x, _ = self.s4_ckbd[i](x, reverse=True)
+                x, inc = self.s4_ckbd[i](x, reverse=True)
+                log_diag_J += inc
 
             x = self.restore(x, x_off_3, self.order_matrix_3)
+            log_diag_J = self.restore(log_diag_J, log_diag_J_off_3, self.order_matrix_3)
 
             # SCALE 3: 8(16) x 8(16)
-            x = self.squeeze(x)
+            x, log_diag_J = self.squeeze(x), self.squeeze(log_diag_J)
             for i in reversed(range(len(self.s3_chan))):
-                x, _ = self.s3_chan[i](x, reverse=True)
-            x = self.undo_squeeze(x)
+                x, inc = self.s3_chan[i](x, reverse=True)
+                log_diag_J += inc
+            x , log_diag_J = self.undo_squeeze(x), self.undo_squeeze(log_diag_J)
 
             for i in reversed(range(len(self.s3_ckbd))):
-                x, _ = self.s3_ckbd[i](x, reverse=True)
+                x, inc = self.s3_ckbd[i](x, reverse=True)
+                log_diag_J += inc
 
             x = self.restore(x, x_off_2, self.order_matrix_2)
+            log_diag_J = self.restore(log_diag_J, log_diag_J_off_2, self.order_matrix_2)
 
             # SCALE 2: 16(32) x 16(32)
-            x = self.squeeze(x)
+            x, log_diag_J = self.squeeze(x), self.squeeze(log_diag_J)
             for i in reversed(range(len(self.s2_chan))):
-                x, _ = self.s2_chan[i](x, reverse=True)
-            x = self.undo_squeeze(x)
+                x, inc = self.s2_chan[i](x, reverse=True)
+                log_diag_J += inc
+            x, log_diag_J = self.undo_squeeze(x), self.undo_squeeze(log_diag_J)
 
         for i in reversed(range(len(self.s2_ckbd))):
-            x, _ = self.s2_ckbd[i](x, reverse=True)
+            x, inc = self.s2_ckbd[i](x, reverse=True)
+            log_diag_J += inc
 
         x = self.restore(x, x_off_1, self.order_matrix_1)
+        log_diag_J = self.restore(log_diag_J, log_diag_J_off_1, self.order_matrix_1)
 
         # SCALE 1: 32(64) x 32(64)
-        x = self.squeeze(x)
+        x, log_diag_J = self.squeeze(x), self.squeeze(log_diag_J)
         for i in reversed(range(len(self.s1_chan))):
-            x, _ = self.s1_chan[i](x, reverse=True)
-        x = self.undo_squeeze(x)
+            x, inc = self.s1_chan[i](x, reverse=True)
+            log_diag_J += inc
+        x, log_diag_J = self.undo_squeeze(x), self.undo_squeeze(log_diag_J)
 
         for i in reversed(range(len(self.s1_ckbd))):
-            x, _ = self.s1_ckbd[i](x, reverse=True)
+            x, inc = self.s1_ckbd[i](x, reverse=True)
+            log_diag_J += inc
 
-        return x
+        return x, log_diag_J
 
     def f(self, x):
         """Transformation f: X -> Z (inverse of g).
@@ -905,7 +926,7 @@ class RealNVP(nn.Module):
 
         return z, log_diag_J
 
-    def log_prob(self, x):
+    def log_prob(self, x, reverse=False):
         """Computes data log-likelihood.
 
         (See Eq(2) and Eq(3) in the real NVP paper.)
@@ -931,7 +952,7 @@ class RealNVP(nn.Module):
         C = self.datainfo.channel
         H = W = self.datainfo.size
         z = self.prior.sample((size, C, H, W))
-        return self.g(z)
+        return self.g(z)[0]
 
     def forward(self, x):
         """Forward pass.
