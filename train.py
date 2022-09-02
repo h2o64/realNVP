@@ -72,9 +72,13 @@ def main(args):
     val_loader = torch.utils.data.DataLoader(val_split,
         batch_size=batch_size, shuffle=False, num_workers=2)
 
-    prior = distributions.Normal(   # isotropic standard normal distribution
-        torch.tensor(0.).to(device), torch.tensor(1.).to(device))
-    flow = realnvp.RealNVP(datainfo=data_info, prior=prior, hps=hps).to(device)
+    #prior = distributions.Normal(   # isotropic standard normal distribution
+    #    torch.tensor(0.).to(device), torch.tensor(1.).to(device))
+    prior = distributions.MultivariateNormal(
+        loc=torch.zeros(1024).to(device), #torch.real(torch.load('/home/louis/Bureau/STAGE/Code/ebm-anatomy/means_covs/mnist/loc.pt', map_location=device)),
+        covariance_matrix=torch.eye(1024).to(device) #torch.real(torch.load('/home/louis/Bureau/STAGE/Code/ebm-anatomy/means_covs/mnist/covariance_matrix.pt', map_location=device)),
+    )
+    flow = realnvp.RealNVP(datainfo=data_info, hps=hps).to(device)
     optimizer = optim.Adamax(flow.parameters(), lr=lr, betas=(momentum, decay), eps=1e-7)
     
     epoch = 0
@@ -98,10 +102,11 @@ def main(args):
             log_det = log_det.to(device)
 
             # log-likelihood of input minibatch
-            log_ll, weight_scale = flow(x)
+            log_ll = flow.push_forward(x, prior)
             log_ll = (log_ll + log_det).mean()
 
             # add L2 regularization on scaling factors
+            weight_scale = flow.get_weight_scale()
             loss = -log_ll + scale_reg * weight_scale
             running_loss += loss.item()
             running_log_ll += log_ll.item()
@@ -135,10 +140,11 @@ def main(args):
                 log_det = log_det.to(device)
 
                 # log-likelihood of input minibatch
-                log_ll, weight_scale = flow(x)
+                log_ll = flow.push_forward(x, prior)
                 log_ll = (log_ll + log_det).mean()
 
                 # add L2 regularization on scaling factors
+                weight_scale = flow.get_weight_scale()
                 loss = -log_ll + scale_reg * weight_scale
                 running_loss += loss.item()
                 running_log_ll += log_ll.item()
@@ -153,7 +159,7 @@ def main(args):
             running_loss = 0.
             running_log_ll = 0.
 
-            samples = flow.sample(args.sample_size)
+            samples = flow.sample(args.sample_size, prior)
             samples, _ = data_utils.logit_transform(samples, reverse=True)
             utils.save_image(utils.make_grid(samples),
                 './samples/' + dataset + '/' + filename + '_ep%d.png' % epoch)

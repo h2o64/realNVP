@@ -537,17 +537,15 @@ class ChannelwiseCoupling(nn.Module):
         return self.coupling(x, reverse)
 
 class RealNVP(nn.Module):
-    def __init__(self, datainfo, prior, hps):
+    def __init__(self, datainfo, hps):
         """Initializes a RealNVP.
 
         Args:
             datainfo: information of dataset to be modeled.
-            prior: prior distribution over latent space Z.
             hps: the set of hyperparameters.
         """
         super(RealNVP, self).__init__()
         self.datainfo = datainfo
-        self.prior = prior
         self.hps = hps
 
         chan = datainfo.channel
@@ -926,7 +924,7 @@ class RealNVP(nn.Module):
 
         return z, log_diag_J
 
-    def log_prob(self, x, reverse=False):
+    def push_forward(self, x, base):
         """Computes data log-likelihood.
 
         (See Eq(2) and Eq(3) in the real NVP paper.)
@@ -938,10 +936,27 @@ class RealNVP(nn.Module):
         """
         z, log_diag_J = self.f(x)
         log_det_J = torch.sum(log_diag_J, dim=(1, 2, 3))
-        log_prior_prob = torch.sum(self.prior.log_prob(z), dim=(1, 2, 3))
-        return log_prior_prob + log_det_J
+        # log_base_prob = torch.sum(base.log_prob(z), dim=(1, 2, 3))
+        log_base_prob = base.log_prob(z.view((z.shape[0], -1))).view(log_det_J.shape)
+        return log_base_prob + log_det_J
 
-    def sample(self, size):
+    def push_backward(self, z, target):
+        """Computes data log-likelihood.
+
+        (See Eq(2) and Eq(3) in the real NVP paper.)
+
+        Args:
+            z: input minibatch.
+        Returns:
+            reverse log-likelihood of input.
+        """
+        x, log_diag_J = self.g(z)
+        log_det_J = torch.sum(log_diag_J, dim=(1, 2, 3))
+        # log_target_prob = torch.sum(target.log_prob(x), dim=(1, 2, 3))
+        log_target_prob = target.log_prob(z).view(log_det_J.shape)
+        return log_target_prob + log_det_J
+
+    def sample(self, size, base):
         """Generates samples.
 
         Args:
@@ -951,18 +966,10 @@ class RealNVP(nn.Module):
         """
         C = self.datainfo.channel
         H = W = self.datainfo.size
-        z = self.prior.sample((size, C, H, W))
+        z = base.sample((size,)).view((-1, C, H, W))
         return self.g(z)[0]
 
-    def forward(self, x):
-        """Forward pass.
-
-        Args:
-            x: input minibatch.
-        Returns:
-            log-likelihood of input and sum of squares of scaling factors.
-            (the latter is used in L2 regularization.)
-        """
+    def get_weight_scale(self):
         weight_scale = None
         for name, param in self.named_parameters():
             param_name = name.split('.')[-1]
@@ -971,4 +978,4 @@ class RealNVP(nn.Module):
                     weight_scale = torch.pow(param, 2).sum()
                 else:
                     weight_scale = weight_scale + torch.pow(param, 2).sum()
-        return self.log_prob(x), weight_scale
+        return weight_scale
