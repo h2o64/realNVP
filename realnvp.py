@@ -566,6 +566,18 @@ class RealNVP(nn.Module):
             # SCALE 2: 6 x 16 x 16
             self.s2_ckbd = self.checkerboard_combo(chan, dim, size, hps, final=True)
 
+        elif datainfo.name == 'mnist':
+            # architecture for MNIST (down to 16 x 16 x C)
+            # SCALE 1: 1 x 32 x 32
+            self.s1_ckbd = self.checkerboard_combo(chan, dim, size, hps)
+            self.s1_chan = self.channelwise_combo(chan*4, dim, hps)
+            self.order_matrix_1 = self.order_matrix(chan).cuda()
+            chan *= 2
+            size //= 2
+
+            # SCALE 2: 6 x 16 x 16
+            self.s2_ckbd = self.checkerboard_combo(chan, dim, size, hps, final=True)
+
         else: # NOTE: can construct with loop (for future edit)
             # architecture for ImageNet and CelebA (down to 4 x 4 x C)
             # SCALE 1: 3 x 32(64) x 32(64)
